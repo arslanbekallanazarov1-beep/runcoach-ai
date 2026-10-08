@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "runcoach-ai-backend"
+version = "0.1.0"
+description = "RunCoach AI Backend Foundation"
+authors = [
+    {name = "RunCoach AI Team", email = "team@runcoach.ai"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+[project.dependencies]
+python = ">=3.11"
+fastapi = ">=0.104.0"
+uvicorn = ">=0.24.0"
+SQLAlchemy = ">=2.0.0"
+python-jose = {extras = ["cryptography"], version = ">=3.3.0"}
+python-multipart = ">=0.0.4"
+psycopg2-binary = ">=2.9.0"
+python-dotenv = ">=1.0.0"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.uvicorn]
+host = "0.0.0.0"
+port = 8000
+workers = 1
+
+[tool.alembic]
+this = "backend/app/alembic.ini"
+file_template = "%(rev)s_%(slug)s_template"

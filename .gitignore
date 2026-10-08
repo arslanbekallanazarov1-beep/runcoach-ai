@@ -247,3 +247,7 @@ __marimo__/
 *.db
 *.sqlite
 *.sqlite3
+
+# Flutter app source (the generic Python rule above ignores every lib/ directory)
+!frontend/lib/
+!frontend/lib/**

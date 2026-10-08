@@ -1,0 +1,35 @@
+name: runcoach_ai
+description: RunCoach AI mobile app for beginner runners.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_local_notifications: ^22.3.1
+  flutter_localizations:
+    sdk: flutter
+  flutter_tts: ^4.2.5
+  geolocator: ^13.0.2
+  http: ^1.2.2
+  share_plus: ^12.0.1
+  shared_preferences: ^2.5.5
+  web: ^1.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  image_path: "icon.png"
+  android: true
+  ios: false
+  remove_alpha_ios: true
