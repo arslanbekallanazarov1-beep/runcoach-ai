@@ -3,8 +3,10 @@ class TrainingPlan {
     required this.title,
     required this.overview,
     required this.weeks,
+    this.id,
   });
 
+  final String? id;
   final String title;
   final String overview;
   final List<TrainingPlanWeek> weeks;
@@ -13,7 +15,11 @@ class TrainingPlan {
     final title = json['title'];
     final overview = json['overview'];
     final weeks = json['weeks'];
-    if (title is! String || overview is! String || weeks is! List) {
+    final id = json['id'];
+    if (title is! String ||
+        overview is! String ||
+        weeks is! List ||
+        (id != null && id is! String)) {
       throw const FormatException('Training plan response has invalid fields.');
     }
 
@@ -32,6 +38,7 @@ class TrainingPlan {
     }
 
     return TrainingPlan(
+      id: id as String?,
       title: title,
       overview: overview,
       weeks: parsedWeeks,
@@ -77,30 +84,48 @@ class TrainingPlanWorkout {
     required this.title,
     required this.description,
     required this.durationMinutes,
+    this.id,
+    this.completed = false,
+    this.completedAt,
   });
 
+  final String? id;
   final String day;
   final String title;
   final String description;
   final int durationMinutes;
+  final bool completed;
+  final DateTime? completedAt;
 
   factory TrainingPlanWorkout.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
     final day = json['day'];
     final title = json['title'];
     final description = json['description'];
     final durationMinutes = json['duration_minutes'];
-    if (day is! String ||
+    final completed = json['completed'];
+    final completedAt = json['completed_at'];
+    final parsedCompletedAt =
+        completedAt is String ? DateTime.tryParse(completedAt) : null;
+    if ((id != null && id is! String) ||
+        day is! String ||
         title is! String ||
         description is! String ||
-        durationMinutes is! int) {
+        durationMinutes is! int ||
+        (completed != null && completed is! bool) ||
+        (completedAt != null &&
+            (completedAt is! String || parsedCompletedAt == null))) {
       throw const FormatException('Training plan workout has invalid fields.');
     }
 
     return TrainingPlanWorkout(
+      id: id as String?,
       day: day,
       title: title,
       description: description,
       durationMinutes: durationMinutes,
+      completed: completed as bool? ?? false,
+      completedAt: parsedCompletedAt,
     );
   }
 }

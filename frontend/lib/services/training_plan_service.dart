@@ -12,11 +12,16 @@ class TrainingPlanService {
   TrainingPlanService({
     http.Client? client,
     String? baseUrl,
+    Future<String?> Function()? tokenProvider,
   })  : _client = client ?? http.Client(),
-        _baseUrl = baseUrl ?? RunAnalysisService.baseUrl;
+        _baseUrl = RunAnalysisService.normalizeBaseUrl(
+          baseUrl ?? RunAnalysisService.baseUrl,
+        ),
+        _tokenProvider = tokenProvider;
 
   final http.Client _client;
   final String _baseUrl;
+  final Future<String?> Function()? _tokenProvider;
 
   void close() => _client.close();
 
@@ -26,18 +31,11 @@ class TrainingPlanService {
     required int timelineWeeks,
     required String language,
   }) async {
-    final root = _baseUrl.endsWith('/')
-        ? _baseUrl.substring(0, _baseUrl.length - 1)
-        : _baseUrl;
-    late final http.Response response;
-    try {
-      final uri = Uri.parse('$root/api/v1/generate-plan').replace(
-        queryParameters: {'lang': language},
-      );
-      response = await _client
+    final response = await _sendRequest(
+      () async => _client
           .post(
-            uri,
-            headers: const {'Content-Type': 'application/json'},
+            Uri.parse('$_baseUrl/api/v1/training-plan'),
+            headers: await _headers(),
             body: jsonEncode({
               'goal': goal,
               'fitness_level': fitnessLevel,
@@ -45,7 +43,79 @@ class TrainingPlanService {
               'language': language,
             }),
           )
-          .timeout(_trainingPlanTimeout);
+          .timeout(_trainingPlanTimeout),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw _httpException(response);
+    }
+
+    final plan = _parsePlan(response.body);
+    if (plan.weeks.length != timelineWeeks) {
+      throw const TrainingPlanException(
+        'The plan service returned an invalid plan.',
+        failure: TrainingPlanFailure.invalidResponse,
+      );
+    }
+    return plan;
+  }
+
+  Future<TrainingPlan?> fetchPlan() async {
+    final response = await _sendRequest(
+      () async => _client
+          .get(
+            Uri.parse('$_baseUrl/api/v1/training-plan'),
+            headers: await _headers(),
+          )
+          .timeout(const Duration(seconds: 15)),
+    );
+    if (response.statusCode == 404) return null;
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw _httpException(response);
+    }
+    return _parsePlan(response.body);
+  }
+
+  Future<void> updateWorkoutCompletion({
+    required String planId,
+    required String workoutId,
+    required bool completed,
+  }) async {
+    final response = await _sendRequest(
+      () async => _client
+          .patch(
+            Uri.parse(
+              '$_baseUrl/api/v1/training-plan/$planId/workouts/$workoutId',
+            ),
+            headers: await _headers(),
+            body: jsonEncode({'completed': completed}),
+          )
+          .timeout(const Duration(seconds: 15)),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw _httpException(response);
+    }
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['workout_id'] != workoutId ||
+          decoded['completed'] != completed ||
+          decoded['status'] != 'updated') {
+        throw const FormatException('Expected an updated workout response.');
+      }
+    } on FormatException catch (error) {
+      throw TrainingPlanException(
+        'The plan service returned an invalid workout status.',
+        cause: error,
+        failure: TrainingPlanFailure.invalidResponse,
+      );
+    }
+  }
+
+  Future<http.Response> _sendRequest(
+    Future<http.Response> Function() request,
+  ) async {
+    try {
+      return await request();
     } on TimeoutException {
       throw const TrainingPlanException(
         'The plan provider timed out.',
@@ -58,34 +128,30 @@ class TrainingPlanService {
         failure: TrainingPlanFailure.connection,
       );
     }
+  }
 
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final detail = _responseDetail(response.body);
-      final failure = switch (detail) {
-        'plan_ai_not_configured' => TrainingPlanFailure.notConfigured,
-        'plan_ai_timeout' => TrainingPlanFailure.providerTimeout,
-        'plan_ai_provider_error' ||
-        'plan_generation_unavailable' =>
-          TrainingPlanFailure.providerUnavailable,
-        'plan_invalid_response' => TrainingPlanFailure.invalidResponse,
-        _ => TrainingPlanFailure.http,
-      };
-      throw TrainingPlanException(
-        detail ?? 'The plan service could not generate a plan.',
-        cause: response.statusCode,
-        failure: failure,
-      );
+  Future<Map<String, String>> _headers() async {
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    final token = await _tokenProvider?.call();
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = '******';
     }
+    return headers;
+  }
 
+  TrainingPlan _parsePlan(String body) {
     try {
-      final decoded = jsonDecode(response.body);
+      final decoded = jsonDecode(body);
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException('Expected a JSON object.');
       }
       final plan = TrainingPlan.fromJson(decoded);
-      if (plan.weeks.length != timelineWeeks) {
+      if (plan.id == null ||
+          plan.weeks.any(
+            (week) => week.workouts.any((workout) => workout.id == null),
+          )) {
         throw const FormatException(
-          'Training plan does not contain the requested number of weeks.',
+          'Saved plans must include plan and workout IDs.',
         );
       }
       return plan;
@@ -96,6 +162,24 @@ class TrainingPlanService {
         failure: TrainingPlanFailure.invalidResponse,
       );
     }
+  }
+
+  TrainingPlanException _httpException(http.Response response) {
+    final detail = _responseDetail(response.body);
+    final failure = switch (detail) {
+      'plan_ai_not_configured' => TrainingPlanFailure.notConfigured,
+      'plan_ai_timeout' => TrainingPlanFailure.providerTimeout,
+      'plan_ai_provider_error' ||
+      'plan_generation_unavailable' =>
+        TrainingPlanFailure.providerUnavailable,
+      'plan_invalid_response' => TrainingPlanFailure.invalidResponse,
+      _ => TrainingPlanFailure.http,
+    };
+    return TrainingPlanException(
+      detail ?? 'The plan service could not complete the request.',
+      cause: response.statusCode,
+      failure: failure,
+    );
   }
 
   String? _responseDetail(String body) {

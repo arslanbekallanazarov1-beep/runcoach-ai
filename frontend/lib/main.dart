@@ -289,6 +289,7 @@ class _RunCoachHomeState extends State<_RunCoachHome> {
             languageCode: widget.languageCode,
             onLocaleChanged: widget.onLocaleChanged,
             onThemeModeChanged: widget.onThemeModeChanged,
+            tokenProvider: () async => widget.authService.accessToken,
           ),
           GearTrackerScreen(gearTracker: widget.gearTracker),
           WeatherScreen(

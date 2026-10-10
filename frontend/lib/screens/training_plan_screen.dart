@@ -13,12 +13,14 @@ class TrainingPlanScreen extends StatefulWidget {
     required this.onThemeModeChanged,
     super.key,
     this.service,
+    this.tokenProvider,
   });
 
   final String languageCode;
   final ValueChanged<Locale> onLocaleChanged;
   final ValueChanged<bool> onThemeModeChanged;
   final TrainingPlanService? service;
+  final Future<String?> Function()? tokenProvider;
 
   @override
   State<TrainingPlanScreen> createState() => _TrainingPlanScreenState();
@@ -32,12 +34,16 @@ class _TrainingPlanScreenState extends State<TrainingPlanScreen> {
   String _fitnessLevel = 'beginner';
   TrainingPlan? _plan;
   bool _isLoading = false;
+  bool _isLoadingSavedPlan = true;
+  final Set<String> _updatingWorkoutIds = {};
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _service = widget.service ?? TrainingPlanService();
+    _service = widget.service ??
+        TrainingPlanService(tokenProvider: widget.tokenProvider);
+    _loadSavedPlan();
   }
 
   @override
@@ -53,7 +59,6 @@ class _TrainingPlanScreenState extends State<TrainingPlanScreen> {
     setState(() {
       _isLoading = true;
       _error = null;
-      _plan = null;
     });
 
     try {
@@ -66,23 +71,114 @@ class _TrainingPlanScreenState extends State<TrainingPlanScreen> {
       if (mounted) setState(() => _plan = plan);
     } on TrainingPlanException catch (error) {
       if (mounted) {
-        final strings = AppStrings.of(context);
-        final message = switch (error.failure) {
-          TrainingPlanFailure.connection => strings.planGenerationFailed,
-          TrainingPlanFailure.notConfigured =>
-            strings.planProviderNotConfigured,
-          TrainingPlanFailure.providerTimeout => strings.planProviderTimeout,
-          TrainingPlanFailure.providerUnavailable =>
-            strings.planProviderUnavailable,
-          TrainingPlanFailure.invalidResponse => strings.planInvalidResponse,
-          TrainingPlanFailure.http => strings.planServerRequestFailed
-              .replaceAll('{status}', '${error.cause ?? ''}'),
-        };
-        setState(() => _error = message);
+        setState(() => _error = _errorMessage(error));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _loadSavedPlan() async {
+    try {
+      final plan = await _service.fetchPlan();
+      if (mounted) {
+        setState(() {
+          _plan = plan;
+          _isLoadingSavedPlan = false;
+        });
+      }
+    } on TrainingPlanException catch (error) {
+      if (mounted) {
+        setState(() {
+          _error = _errorMessage(error);
+          _isLoadingSavedPlan = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _setWorkoutCompleted(
+    TrainingPlanWorkout workout,
+    bool completed,
+  ) async {
+    final plan = _plan;
+    final workoutId = workout.id;
+    final planId = plan?.id;
+    if (planId == null || workoutId == null) return;
+
+    setState(() => _updatingWorkoutIds.add(workoutId));
+    try {
+      await _service.updateWorkoutCompletion(
+        planId: planId,
+        workoutId: workoutId,
+        completed: completed,
+      );
+      if (mounted) {
+        setState(() {
+          if (_plan?.id == planId) {
+            _plan = _replaceWorkoutCompletion(_plan!, workoutId, completed);
+          }
+        });
+      }
+    } on TrainingPlanException catch (error) {
+      if (mounted) {
+        setState(() => _error = _errorMessage(error));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _updatingWorkoutIds.remove(workoutId));
+      }
+    }
+  }
+
+  TrainingPlan _replaceWorkoutCompletion(
+    TrainingPlan plan,
+    String workoutId,
+    bool completed,
+  ) {
+    return TrainingPlan(
+      id: plan.id,
+      title: plan.title,
+      overview: plan.overview,
+      weeks: plan.weeks
+          .map(
+            (week) => TrainingPlanWeek(
+              week: week.week,
+              focus: week.focus,
+              workouts: week.workouts
+                  .map(
+                    (workout) => workout.id == workoutId
+                        ? TrainingPlanWorkout(
+                            id: workout.id,
+                            day: workout.day,
+                            title: workout.title,
+                            description: workout.description,
+                            durationMinutes: workout.durationMinutes,
+                            completed: completed,
+                            completedAt:
+                                completed ? DateTime.now().toUtc() : null,
+                          )
+                        : workout,
+                  )
+                  .toList(growable: false),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  String _errorMessage(TrainingPlanException error) {
+    final strings = AppStrings.of(context);
+    return switch (error.failure) {
+      TrainingPlanFailure.connection => strings.planGenerationFailed,
+      TrainingPlanFailure.notConfigured => strings.planProviderNotConfigured,
+      TrainingPlanFailure.providerTimeout => strings.planProviderTimeout,
+      TrainingPlanFailure.providerUnavailable =>
+        strings.planProviderUnavailable,
+      TrainingPlanFailure.invalidResponse => strings.planInvalidResponse,
+      TrainingPlanFailure.http => strings.planServerRequestFailed
+          .replaceAll('{status}', '${error.cause ?? ''}'),
+    };
   }
 
   @override
@@ -103,6 +199,10 @@ class _TrainingPlanScreenState extends State<TrainingPlanScreen> {
                     onThemeModeChanged: widget.onThemeModeChanged,
                   ),
                   const SizedBox(height: 24),
+                  if (_isLoadingSavedPlan) ...[
+                    const LinearProgressIndicator(),
+                    const SizedBox(height: 16),
+                  ],
                   AppSurfaceCard(
                     child: Form(
                       key: _formKey,
@@ -180,7 +280,9 @@ class _TrainingPlanScreenState extends State<TrainingPlanScreen> {
                           SizedBox(
                             width: double.infinity,
                             child: FilledButton.icon(
-                              onPressed: _isLoading ? null : _generatePlan,
+                              onPressed: _isLoading || _isLoadingSavedPlan
+                                  ? null
+                                  : _generatePlan,
                               icon: _isLoading
                                   ? SizedBox.square(
                                       dimension: 18,
@@ -241,7 +343,11 @@ class _TrainingPlanScreenState extends State<TrainingPlanScreen> {
                     ),
                     const SizedBox(height: 14),
                     ...plan.weeks.map(
-                      (week) => _PlanWeekCard(week: week),
+                      (week) => _PlanWeekCard(
+                        week: week,
+                        updatingWorkoutIds: _updatingWorkoutIds,
+                        onWorkoutChanged: _setWorkoutCompleted,
+                      ),
                     ),
                   ],
                 ]),
@@ -321,9 +427,16 @@ class _PlanHeader extends StatelessWidget {
 }
 
 class _PlanWeekCard extends StatelessWidget {
-  const _PlanWeekCard({required this.week});
+  const _PlanWeekCard({
+    required this.week,
+    required this.updatingWorkoutIds,
+    required this.onWorkoutChanged,
+  });
 
   final TrainingPlanWeek week;
+  final Set<String> updatingWorkoutIds;
+  final void Function(TrainingPlanWorkout workout, bool completed)
+      onWorkoutChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -353,44 +466,71 @@ class _PlanWeekCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             ...week.workouts.map(
-              (workout) => Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerLow,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              '${workout.day} · ${workout.title}',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.w700),
-                            ),
+              (workout) {
+                final workoutId = workout.id;
+                return Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Checkbox(
+                          value: workout.completed,
+                          onChanged: workoutId == null ||
+                                  updatingWorkoutIds.contains(workoutId)
+                              ? null
+                              : (completed) {
+                                  if (completed != null) {
+                                    onWorkoutChanged(workout, completed);
+                                  }
+                                },
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '${workout.day} · ${workout.title}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                            decoration: workout.completed
+                                                ? TextDecoration.lineThrough
+                                                : null,
+                                          ),
+                                    ),
+                                  ),
+                                  Text(
+                                    '${workout.durationMinutes} ${strings.minutesUnit}',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelMedium
+                                        ?.copyWith(color: colorScheme.primary),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Text(workout.description),
+                            ],
                           ),
-                          Text(
-                            '${workout.durationMinutes} ${strings.minutesUnit}',
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelMedium
-                                ?.copyWith(color: colorScheme.primary),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(workout.description),
-                    ],
+                        )
+                      ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ],
         ),

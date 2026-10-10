@@ -71,9 +71,10 @@ distance, pace, duration, heart rate, RPE, training load, and saved coach
 feedback. Analysis and training-plan requests include the active `lang`
 (`en` or `ru`) so backend AI output uses the selected language.
 
-The Plans tab calls `POST /api/v1/generate-plan` for a structured
-week-by-week schedule and allows up to 90 seconds for the AI provider to
-respond. The Shoes tab stores shoe names and mileage locally
+The Plans tab uses the authenticated training-plan endpoints to generate and
+save a structured week-by-week schedule, reload the active plan, and persist
+workout checkbox changes. Plan generation allows up to 90 seconds for the AI
+provider to respond. The Shoes tab stores shoe names and mileage locally
 using cross-platform preferences; select a pair in the run form and its
 mileage increases after successful analysis. A deterministic wear alert
 appears once a pair exceeds 700 km. The dashboard uses the Riegel formula
